@@ -49,12 +49,20 @@ app.get('/api/search', async (req, res) => {
 });
 
 // 2. Initial Trending/Homepage Feed Endpoint (Replaces YouTube API Chart Fetch)
+// Updated Initial Trending/Homepage Feed Endpoint (Ultra-Stable Scraper Fallback)
 app.get('/api/trending', async (req, res) => {
     try {
-        const results = await YouTube.trending();
+        // We use a high-traffic trending search parameter fallback 
+        // because YouTube heavily blocks the default raw .trending() scraper on cloud platforms.
+        const fallbackQuery = "trending music new";
+        const results = await YouTube.search(fallbackQuery, { limit: 16, type: "video" });
         
-        // Take the top 16 trending clips for our home dashboard layout grid
-        const formattedVideos = results.slice(0, 16).map(video => ({
+        if (!results || results.length === 0) {
+            return res.json({ items: [] });
+        }
+
+        // Map the data to perfectly match your frontend components
+        const formattedVideos = results.map(video => ({
             id: { videoId: video.id },
             snippet: {
                 title: video.title,
