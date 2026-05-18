@@ -1,120 +1,79 @@
 const express = require('express');
-const { exec } = require('child_process');
-const path = require('path');
-const fs = require('fs');
+const cors = require('cors');
+const YouTube = require('youtube-sr').default;
 
 const app = express();
+const PORT = process.env.PORT || 10000;
 
-// 1. Updated HTML Frontend UI with Format Buttons
+// Enable CORS for your React Frontend
+app.use(cors({
+    origin: '*' // Change this to your specific Vercel URL later if you want to lock it down
+}));
+
+app.use(express.json());
+
+// Base diagnostic route
 app.get('/', (req, res) => {
-    res.send(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Premium Video Downloader</title>
-            <style>
-                body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin-top: 50px; background: #1a1a1a; color: #fff; }
-                .container { max-width: 600px; margin: auto; padding: 20px; background: #2d2d2d; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-                input { width: 80%; padding: 12px; margin: 15px 0; border: 1px solid #444; border-radius: 4px; font-size:16px; background: #3d3d3d; color: #fff; }
-                .button-group { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 15px; }
-                button { padding: 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size:14px; transition: 0.2s; }
-                .btn-video { background: #00bcd4; color: white; }
-                .btn-video:hover { background: #0097a7; }
-                .btn-mp3 { background: #e91e63; color: white; grid-column: span 2; font-size: 16px; }
-                .btn-mp3:hover { background: #c2185b; }
-                #status { margin-top: 20px; color: #bbb; font-weight: bold; min-height: 24px; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h2>Cloud Media Downloader</h2>
-                <p>Paste your link and select your preferred download format:</p>
-                <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=...">
-                
-                <div class="button-group">
-                    <button class="btn-video" onclick="triggerDownload('360')">🎬 Download 360p (MP4)</button>
-                    <button class="btn-video" onclick="triggerDownload('480')">🎬 Download 480p (MP4)</button>
-                    <button class="btn-video" onclick="triggerDownload('720')">🎬 Download 720p (MP4)</button>
-                    <button class="btn-video" onclick="triggerDownload('1080')">🎬 Download 1080p (MP4)</button>
-                    <button class="btn-mp3" onclick="triggerDownload('mp3')">🎵 Extract Audio (MP3)</button>
-                </div>
-                <div id="status"></div>
-            </div>
-
-            <script>
-                function triggerDownload(format) {
-                    const url = document.getElementById('url').value;
-                    if (!url) return alert('Please paste a video link first!');
-                    
-                    const statusDiv = document.getElementById('status');
-                    statusDiv.innerText = "Processing format requests on cloud server... please wait.";
-                    
-                    // Directs browser to download endpoint passing both URL and format requested
-                    window.location.href = \`/download?url=\${encodeURIComponent(url)}&format=\${format}\`;
-                }
-            </script>
-        </body>
-        </html>
-    `);
+    res.json({ status: "online", service: "GoTube Render Scraper Core" });
 });
 
-// 2. Updated Dynamic Download Handler
-app.get('/download', (req, res) => {
-    const videoUrl = req.query.url;
-    const formatRequested = req.query.format || '720'; // Default backup to 720p
-    
-    if (!videoUrl) return res.status(400).send('URL parameter is required');
-
-    const timestamp = Date.now();
-    const cookiesPath = path.join(__dirname, 'temp_cookies.txt');
-    
-    let outputFilename = `download_${timestamp}.mp4`;
-    let formatSelector = '';
-    let extraFlags = '';
-
-    // Set up commands depending on what option button the user clicked
-    if (formatRequested === 'mp3') {
-        outputFilename = `audio_${timestamp}.mp3`;
-        formatSelector = '-f "bestaudio/best"';
-        extraFlags = '-x --audio-format mp3 --audio-quality 0'; // Extracts pure audio and converts to mp3
-    } else {
-        // Limits height format cap checks based on user selection rules
-        formatSelector = `-f "bestvideo[ext=mp4][height<=${formatRequested}]+bestaudio[ext=m4a]/best[ext=mp4][height<=${formatRequested}]/best"`;
-        extraFlags = '--merge-output-format mp4';
-    }
-
-    const outputPath = path.join(__dirname, outputFilename);
-
-    if (process.env.YOUTUBE_COOKIES) {
-        fs.writeFileSync(cookiesPath, process.env.YOUTUBE_COOKIES);
-    }
-    const cookieFlag = fs.existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : '';
-
-    // Unified command incorporating dynamic format specifications
-    const cmd = `yt-dlp ${cookieFlag} --js node --extractor-args "youtube:player_client=tv;player_js_variant=tv" ${formatSelector} ${extraFlags} -o "${outputPath}" "${videoUrl}"`;
-
-    console.log(`User requested format [${formatRequested}]. Running: ${cmd}`);
-
-    exec(cmd, (error, stdout, stderr) => {
-        if (fs.existsSync(cookiesPath)) fs.unlinkSync(cookiesPath);
-
-        if (error) {
-            console.error(`Exec error: ${error}`);
-            return res.status(500).send('Error formatting media file. Requested resolution might not be available for this specific video.');
+// 1. Search Videos Endpoint (Replaces YouTube API Search)
+app.get('/api/search', async (req, res) => {
+    try {
+        const { q } = req.query;
+        if (!q) {
+            return res.status(400).json({ error: "Search query string parameter 'q' is required" });
         }
 
-        // Delivers file to user with correct extensions
-        const clientDownloadName = formatRequested === 'mp3' ? 'audio.mp3' : `video_${formatRequested}p.mp4`;
+        // Fetch up to 20 search items safely using public scraping rules
+        const results = await YouTube.search(q, { limit: 20, type: "video" });
         
-        res.download(outputPath, clientDownloadName, (err) => {
-            if (fs.existsSync(outputPath)) {
-                fs.unlinkSync(outputPath);
+        // Format the scraped response to perfectly match what our React components expect
+        const formattedVideos = results.map(video => ({
+            id: { videoId: video.id }, // Matches the structural layout of standard YouTube API response objects
+            snippet: {
+                title: video.title,
+                thumbnails: {
+                    medium: {
+                        url: video.thumbnail?.url || (video.thumbnails && video.thumbnails[0]?.url) || ""
+                    }
+                }
             }
-        });
-    });
+        }));
+
+        res.json({ items: formattedVideos });
+    } catch (error) {
+        console.error("Render Scraper Search Error:", error);
+        res.status(500).json({ error: "Internal server error gathering video search criteria" });
+    }
 });
 
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
+// 2. Initial Trending/Homepage Feed Endpoint (Replaces YouTube API Chart Fetch)
+app.get('/api/trending', async (req, res) => {
+    try {
+        const results = await YouTube.trending();
+        
+        // Take the top 16 trending clips for our home dashboard layout grid
+        const formattedVideos = results.slice(0, 16).map(video => ({
+            id: { videoId: video.id },
+            snippet: {
+                title: video.title,
+                thumbnails: {
+                    medium: {
+                        url: video.thumbnail?.url || (video.thumbnails && video.thumbnails[0]?.url) || ""
+                    }
+                }
+            }
+        }));
+
+        res.json({ items: formattedVideos });
+    } catch (error) {
+        console.error("Render Scraper Trending Error:", error);
+        res.status(500).json({ error: "Internal server error gathering trending media charts" });
+    }
+});
+
+// Start listening for client application inquiries
+app.listen(PORT, () => {
+    console.log(`GoTube Render Scraper engine operating efficiently on port ${PORT}`);
+});

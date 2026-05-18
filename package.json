@@ -1,12 +1,14 @@
 {
-  "name": "railway-ytdlp-downloader",
+  "name": "metube-render-backend",
   "version": "1.0.0",
+  "description": "GoTube Metadata Scraper Service running on Render",
   "main": "server.js",
-  "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.19.2"
-  },
   "scripts": {
     "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "youtube-sr": "^4.3.11"
   }
 }
