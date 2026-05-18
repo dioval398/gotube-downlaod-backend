@@ -19,45 +19,83 @@ app.get('/', (req, res) => {
 
 // 1. Search Videos Endpoint (Replaces YouTube API Search)
 // Upgraded Ultra-Stable Search Endpoint with Fail-Safe Fallback
+const { exec } = require('child_process');
+
+// Heavy-Duty Search Endpoint with yt-dlp Backup
 app.get('/api/search', async (req, res) => {
     try {
         const { q } = req.query;
         if (!q) {
-            return res.status(400).json({ error: "Search query string parameter 'q' is required" });
+            return res.status(400).json({ error: "Search query is required" });
         }
 
         let results = [];
         
+        // --- ENGINE 1: Fast youtube-sr Scraper ---
         try {
-            // Primary Attempt: Try scraping using youtube-sr
-            results = await YouTube.search(q, { limit: 20, type: "video" });
-        } catch (scraperError) {
-            console.warn("Primary scraper choked, engaging secondary engine...", scraperError.message);
+            results = await YouTube.search(q, { limit: 15, type: "video" });
+        } catch (err) {
+            console.warn("youtube-sr failed or blocked, switching to engine 2...");
         }
 
-        // Fallback Layer: If youtube-sr gets blocked and returns nothing, run a targeted search query
+        // --- ENGINE 2: Bulletproof yt-dlp Backup ---
         if (!results || results.length === 0) {
-            // We force a highly-cached fallback string that YouTube data centers rarely block
-            const fallbackTerm = `${q} official video`;
-            results = await YouTube.search(fallbackTerm, { limit: 12, type: "video" });
+            console.log(`Executing yt-dlp fallback search for: "${q}"`);
+            
+            // This command asks yt-dlp to find the top 12 matches and print them flatly as JSON text
+            const ytDlpCommand = `yt-dlp "ytsearch12:${q}" --dump-json --flat-playlist --no-playlist`;
+
+            exec(ytDlpCommand, (error, stdout, stderr) => {
+                if (error || !stdout) {
+                    console.error("Both search engines failed:", stderr);
+                    return res.json({ items: [] }); // Return empty array safely if both fail
+                }
+
+                try {
+                    // Split the line-by-line JSON objects returned by yt-dlp
+                    const lines = stdout.trim().split('\n');
+                    const formattedVideos = lines.map(line => {
+                        const videoData = JSON.parse(line);
+                        return {
+                            id: { videoId: videoData.id },
+                            snippet: {
+                                title: videoData.title,
+                                thumbnails: {
+                                    medium: {
+                                        url: `https://i.ytimg.com/vi/${videoData.id}/mqdefault.jpg` // Build stable direct thumbnail URL
+                                    }
+                                }
+                              }
+                        };
+                    });
+
+                    return res.json({ items: formattedVideos });
+                } catch (parseError) {
+                    console.error("yt-dlp JSON parsing exception:", parseError);
+                    return res.json({ items: [] });
+                }
+            });
+            
+            return; // Exit out of the main block and let exec handle the response async
         }
 
-        // Format the final array cleanly for our SPA / React interface
+        // If Engine 1 worked perfectly, map and return its data instantly
         const formattedVideos = results.map(video => ({
             id: { videoId: video.id },
             snippet: {
                 title: video.title,
                 thumbnails: {
                     medium: {
-                        url: video.thumbnail?.url || (video.thumbnails && video.thumbnails[0]?.url) || "https://via.placeholder.com/320x180?text=GoTube+Media"
+                        url: video.thumbnail?.url || (video.thumbnails && video.thumbnails[0]?.url) || ""
                     }
                 }
             }
         }));
 
         res.json({ items: formattedVideos });
+
     } catch (error) {
-        console.error("Render Scraper Search Fatal Exception:", error);
+        console.error("Fatal exception inside search router:", error);
         res.status(500).json({ error: "Internal server error gathering video search criteria" });
     }
 });
