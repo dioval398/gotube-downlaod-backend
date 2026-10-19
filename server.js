@@ -28,14 +28,12 @@ if (process.env.YOUTUBE_COOKIES) {
   console.log("Cookies loaded from cookies.txt file");
 }
 
-// Common yt-dlp flags to bypass bot detection and 429s
+// Common yt-dlp flags to bypass bot detection
 const COMMON_FLAGS = [
   "--cookies", COOKIES,
   "--no-playlist",
-  "--add-header", "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-  "--add-header", "Accept-Language:en-US,en;q=0.9",
-  "--extractor-args", "youtube:player_client=web,default",
-  "--sleep-requests", "1",
+  "--extractor-args", "youtube:player_client=ios",
+  "--add-header", "User-Agent:com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)",
 ];
 
 /* =========================
@@ -164,17 +162,31 @@ app.get("/api/download", (req, res) => {
 
   if (format === "mp3") {
     const filename = `${safeTitle}_Audio.mp3`;
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("Content-Type", "audio/mpeg");
+    const tmpFile  = path.join(os.tmpdir(), `gotube_${id}_mp3_${Date.now()}.mp3`);
 
     const yt = spawn("yt-dlp", [
       ...COMMON_FLAGS,
       "-x", "--audio-format", "mp3", "--audio-quality", "0",
-      "-o", "-", videoUrl,
+      "-o", tmpFile, videoUrl,
     ]);
-    yt.stdout.pipe(res);
+
     yt.stderr.on("data", (chunk) => console.error("yt-dlp:", chunk.toString()));
     yt.on("error", (err) => { if (!res.headersSent) res.status(500).json({ success: false, error: "Download failed" }); });
+
+    yt.on("close", (code) => {
+      if (code !== 0 || !fs.existsSync(tmpFile)) {
+        if (!res.headersSent) res.status(500).json({ success: false, error: "yt-dlp mp3 failed" });
+        return;
+      }
+      const stat = fs.statSync(tmpFile);
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Content-Length", stat.size);
+      const stream = fs.createReadStream(tmpFile);
+      stream.pipe(res);
+      stream.on("close", () => fs.unlink(tmpFile, () => {}));
+    });
+
     req.on("close", () => yt.kill());
 
   } else {
