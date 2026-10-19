@@ -136,8 +136,54 @@ app.get("/api/video", (req, res) => {
 });
 
 /* =========================
+   DOWNLOAD (STREAM via yt-dlp)
+========================= */
+app.get("/api/download", (req, res) => {
+  const { id, format } = req.query;
+
+  if (!id || !format) {
+    return res.status(400).json({ success: false, error: "Missing id or format" });
+  }
+
+  const videoUrl = `https://www.youtube.com/watch?v=${id}`;
+  let args, filename, contentType;
+
+  if (format === "mp3") {
+    args = ["-x", "--audio-format", "mp3", "--audio-quality", "0", "-o", "-", videoUrl];
+    filename = `${id}.mp3`;
+    contentType = "audio/mpeg";
+  } else {
+    const height = parseInt(format, 10);
+    args = [
+      "-f", `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`,
+      "--merge-output-format", "mp4",
+      "-o", "-",
+      videoUrl
+    ];
+    filename = `${id}_${format}p.mp4`;
+    contentType = "video/mp4";
+  }
+
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Type", contentType);
+
+  const yt = spawn("yt-dlp", args);
+
+  yt.stdout.pipe(res);
+
+  yt.stderr.on("data", (chunk) => console.error("yt-dlp:", chunk.toString()));
+
+  yt.on("error", (err) => {
+    console.error("spawn error:", err);
+    if (!res.headersSent) res.status(500).json({ success: false, error: "Download failed" });
+  });
+
+  req.on("close", () => yt.kill());
+});
+
+/* =========================
    SERVER START
 ========================= */
 app.listen(process.env.PORT || 3000, () => {
-  console.log("GoTube FULL API running on Railway");
+  console.log("GoTube FULL API running on Render");
 });
