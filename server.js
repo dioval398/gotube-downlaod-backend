@@ -2,9 +2,23 @@ const express = require("express");
 const { spawn } = require("child_process");
 const cors = require("cors");
 
+const fs   = require("fs");
+const path = require("path");
+const os   = require("os");
+
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Write cookies from env var if available, otherwise fall back to cookies.txt file
+let COOKIES = path.join(__dirname, "cookies.txt");
+if (process.env.YOUTUBE_COOKIES) {
+  COOKIES = path.join(os.tmpdir(), "yt_cookies.txt");
+  fs.writeFileSync(COOKIES, process.env.YOUTUBE_COOKIES, "utf8");
+  console.log("Cookies loaded from YOUTUBE_COOKIES env var");
+} else {
+  console.log("Cookies loaded from cookies.txt file");
+}
 
 /* =========================
    SEARCH (NEW FEATURE)
@@ -20,6 +34,7 @@ app.get("/search", async (req, res) => {
   }
 
   const yt = spawn("yt-dlp", [
+    "--cookies", COOKIES,
     "ytsearch5:" + query,
     "-j",
     "--flat-playlist"
@@ -72,6 +87,7 @@ app.get("/api/video", (req, res) => {
   }
 
   const yt = spawn("yt-dlp", [
+    "--cookies", COOKIES,
     "-j",
     "--no-playlist",
     url
@@ -138,9 +154,6 @@ app.get("/api/video", (req, res) => {
 /* =========================
    DOWNLOAD (STREAM via yt-dlp)
 ========================= */
-const fs   = require("fs");
-const path = require("path");
-const os   = require("os");
 
 app.get("/api/download", (req, res) => {
   const { id, format, title } = req.query;
@@ -158,7 +171,7 @@ app.get("/api/download", (req, res) => {
     // mp3: audio-only, can pipe stdout directly
     filename    = `${safeTitle}_Audio.mp3`;
     contentType = "audio/mpeg";
-    args = ["-x", "--audio-format", "mp3", "--audio-quality", "0", "-o", "-", videoUrl];
+    args = ["--cookies", COOKIES, "-x", "--audio-format", "mp3", "--audio-quality", "0", "-o", "-", videoUrl];
 
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("Content-Type", contentType);
@@ -181,6 +194,7 @@ app.get("/api/download", (req, res) => {
     tmpFile     = path.join(os.tmpdir(), `gotube_${id}_${format}_${Date.now()}.mp4`);
 
     args = [
+      "--cookies", COOKIES,
       "-f", `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`,
       "--merge-output-format", "mp4",
       "-o", tmpFile,
