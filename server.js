@@ -9,11 +9,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Auto-update yt-dlp at startup so it never gets stale on Render
+// Auto-update yt-dlp at startup to a writable path
 try {
   console.log("Updating yt-dlp...");
-  execSync("yt-dlp -U", { stdio: "inherit" });
-  console.log("yt-dlp updated.");
+  execSync(
+    "curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp",
+    { stdio: "inherit" }
+  );
+  const ver = execSync("yt-dlp --version").toString().trim();
+  console.log("yt-dlp updated to:", ver);
 } catch (e) {
   console.warn("yt-dlp update failed (non-fatal):", e.message);
 }
@@ -32,7 +36,7 @@ if (process.env.YOUTUBE_COOKIES) {
 const COMMON_FLAGS = [
   "--cookies", COOKIES,
   "--no-playlist",
-  "--extractor-args", "youtube:player_client=tv_embedded",
+  "--extractor-args", "youtube:player_client=web_creator",
 ];
 
 /* =========================
