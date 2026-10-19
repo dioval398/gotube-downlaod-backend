@@ -33,10 +33,7 @@ app.get('/', (req, res) => {
 // The New API Download Endpoint for React
 app.get('/api/download', (req, res) => {
     const videoId = req.query.id; 
-    
-    // Clean quality parsing: handle formats like '720p' or '360p' by stripping the 'p' character
-    let formatRequested = req.query.format || '720'; 
-    formatRequested = formatRequested.replace('p', ''); 
+    let formatRequested = (req.query.format || '720').replace('p', ''); 
     
     if (!videoId) return res.status(400).json({ error: 'Video ID parameter is required' });
 
@@ -48,13 +45,11 @@ app.get('/api/download', (req, res) => {
     let formatSelector = '';
     let extraFlags = '';
 
-    // FIXED FORMAT SELECTOR STRINGS
     if (formatRequested === 'mp3') {
         formatSelector = '-f "bestaudio/best"';
         extraFlags = '-x --audio-format mp3 --audio-quality 0'; 
     } else {
-        // Corrected format: strict height limitation applies ONLY to video data streams, audio is free-selected
-        formatSelector = `-f "bestvideo[height<=${formatRequested}]+bestaudio/best"`;
+        formatSelector = `-f "bestvideo[height<=${formatRequested}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${formatRequested}]+bestaudio/best[height<=${formatRequested}]/best"`;
         extraFlags = '--merge-output-format mp4';
     }
 
@@ -63,8 +58,8 @@ app.get('/api/download', (req, res) => {
     }
     const cookieFlag = fs.existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : '';
 
-    // FIXED COMMAND: Removed the restrictive 'tv' player client tags so it works beautifully with your new cookies
-    const cmd = `yt-dlp ${cookieFlag} --js node --extractor-args "youtube:player-client=default,web_safari,web_embedded" ${formatSelector} ${extraFlags} -o "${outputTemplate}" "${videoUrl}"`;
+    // UPDATED: Dropped outdated '--js node' and expanded fallback player clients (android, ios, tv, web)
+    const cmd = `yt-dlp ${cookieFlag} --extractor-args "youtube:player_client=android,ios,tv,web;player_js_variant=tv" ${formatSelector} ${extraFlags} -o "${outputTemplate}" "${videoUrl}"`;
 
     console.log(`React Client requesting ID [${videoId}] at quality [${formatRequested}]. Running...`);
 
@@ -73,10 +68,10 @@ app.get('/api/download', (req, res) => {
 
         if (error) {
             console.error(`Exec error: ${error}`);
-            return res.status(500).json({ error: 'Extraction failed. This resolution may not exist for this video.' });
+            console.error(`Stderr: ${stderr}`);
+            return res.status(500).json({ error: 'Extraction failed. This resolution may not exist or the rate limit was reached.' });
         }
 
-        // Find the newly downloaded file matching our unique timestamp
         const files = fs.readdirSync(__dirname);
         const downloadedFile = files.find(file => file.includes(timestamp.toString()));
 
@@ -87,10 +82,9 @@ app.get('/api/download', (req, res) => {
         const fullFilePath = path.join(__dirname, downloadedFile);
         let clientCleanName = downloadedFile.replace(`_${timestamp}`, '');
 
-        // Force browser file download attachment trigger
         res.download(fullFilePath, clientCleanName, (err) => {
             if (fs.existsSync(fullFilePath)) {
-                fs.unlinkSync(fullFilePath); // Clean disk space immediately!
+                fs.unlinkSync(fullFilePath);
             }
         });
     });
