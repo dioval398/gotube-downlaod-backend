@@ -171,7 +171,7 @@ app.get("/api/download", (req, res) => {
     // mp3: audio-only, can pipe stdout directly
     filename    = `${safeTitle}_Audio.mp3`;
     contentType = "audio/mpeg";
-    args = ["--cookies", COOKIES, "-x", "--audio-format", "mp3", "--audio-quality", "0", "-o", "-", videoUrl];
+    args = ["--cookies", COOKIES, "--no-playlist", "-x", "--audio-format", "mp3", "--audio-quality", "0", "-o", "-", videoUrl];
 
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("Content-Type", contentType);
@@ -195,8 +195,9 @@ app.get("/api/download", (req, res) => {
 
     args = [
       "--cookies", COOKIES,
-      "-f", `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`,
+      "-f", `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${height}]+bestaudio/best[height<=${height}]/best`,
       "--merge-output-format", "mp4",
+      "--no-playlist",
       "-o", tmpFile,
       videoUrl
     ];
