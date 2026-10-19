@@ -32,8 +32,7 @@ if (process.env.YOUTUBE_COOKIES) {
 const COMMON_FLAGS = [
   "--cookies", COOKIES,
   "--no-playlist",
-  "--extractor-args", "youtube:player_client=ios",
-  "--add-header", "User-Agent:com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)",
+  "--extractor-args", "youtube:player_client=mweb",
 ];
 
 /* =========================
