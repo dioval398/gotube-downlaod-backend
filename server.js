@@ -133,6 +133,44 @@ app.get('/api/trending', async (req, res) => {
     }
 });
 
+// 3. Download Endpoint — streams video/audio via yt-dlp
+app.get('/api/download', (req, res) => {
+    const { id, format } = req.query;
+    if (!id || !format) {
+        return res.status(400).json({ error: 'Missing id or format' });
+    }
+
+    const url = `https://www.youtube.com/watch?v=${id}`;
+    let ytArgs, filename, contentType;
+
+    if (format === 'mp3') {
+        ytArgs = `-x --audio-format mp3 --audio-quality 0 -o - "${url}"`;
+        filename = `video_${id}.mp3`;
+        contentType = 'audio/mpeg';
+    } else {
+        const height = parseInt(format, 10);
+        ytArgs = `-f "bestvideo[height<=${height}]+bestaudio/best[height<=${height}]" --merge-output-format mp4 -o - "${url}"`;
+        filename = `video_${id}_${format}p.mp4`;
+        contentType = 'video/mp4';
+    }
+
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', contentType);
+
+    const ytProcess = exec(`yt-dlp ${ytArgs}`, { maxBuffer: 1024 * 1024 * 500 });
+
+    ytProcess.stdout.pipe(res);
+
+    ytProcess.stderr.on('data', (data) => console.error('yt-dlp stderr:', data));
+
+    ytProcess.on('error', (err) => {
+        console.error('yt-dlp process error:', err);
+        if (!res.headersSent) res.status(500).json({ error: 'Download failed' });
+    });
+
+    req.on('close', () => ytProcess.kill());
+});
+
 // Start listening for client application inquiries
 app.listen(PORT, () => {
     console.log(`GoTube Render Scraper engine operating efficiently on port ${PORT}`);
