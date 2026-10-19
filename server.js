@@ -32,7 +32,7 @@ if (process.env.YOUTUBE_COOKIES) {
 const COMMON_FLAGS = [
   "--cookies", COOKIES,
   "--no-playlist",
-  "--extractor-args", "youtube:player_client=mweb",
+  "--extractor-args", "youtube:player_client=tv_embedded",
 ];
 
 /* =========================
