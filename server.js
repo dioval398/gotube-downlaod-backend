@@ -1,7 +1,6 @@
 const express = require("express");
-const { spawn } = require("child_process");
+const { spawn, execSync } = require("child_process");
 const cors = require("cors");
-
 const fs   = require("fs");
 const path = require("path");
 const os   = require("os");
@@ -9,6 +8,15 @@ const os   = require("os");
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Auto-update yt-dlp at startup so it never gets stale on Render
+try {
+  console.log("Updating yt-dlp...");
+  execSync("yt-dlp -U", { stdio: "inherit" });
+  console.log("yt-dlp updated.");
+} catch (e) {
+  console.warn("yt-dlp update failed (non-fatal):", e.message);
+}
 
 // Write cookies from env var if available, otherwise fall back to cookies.txt file
 let COOKIES = path.join(__dirname, "cookies.txt");
@@ -20,133 +28,126 @@ if (process.env.YOUTUBE_COOKIES) {
   console.log("Cookies loaded from cookies.txt file");
 }
 
+// Common yt-dlp flags to bypass bot detection and 429s
+const COMMON_FLAGS = [
+  "--cookies", COOKIES,
+  "--no-playlist",
+  "--add-header", "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+  "--add-header", "Accept-Language:en-US,en;q=0.9",
+  "--extractor-args", "youtube:player_client=web,default",
+  "--sleep-requests", "1",
+];
+
 /* =========================
-   SEARCH (NEW FEATURE)
+   SEARCH
 ========================= */
 app.get("/search", async (req, res) => {
   const query = req.query.q;
-
-  if (!query) {
-    return res.status(400).json({
-      success: false,
-      error: "Missing search query"
-    });
-  }
+  if (!query) return res.status(400).json({ success: false, error: "Missing search query" });
 
   const yt = spawn("yt-dlp", [
-    "--cookies", COOKIES,
+    ...COMMON_FLAGS,
     "ytsearch5:" + query,
-    "-j",
-    "--flat-playlist"
+    "-j", "--flat-playlist",
   ]);
 
   let data = "";
-
-  yt.stdout.on("data", (chunk) => {
-    data += chunk.toString();
-  });
+  yt.stdout.on("data", (chunk) => { data += chunk.toString(); });
+  yt.stderr.on("data", (chunk) => console.error("yt-dlp search:", chunk.toString()));
 
   yt.on("close", () => {
     try {
-      const lines = data.trim().split("\n").filter(Boolean);
-      const results = lines.map(line => {
-        const json = JSON.parse(line);
-        return {
-          title: json.title,
-          url: json.url,
-          id: json.id,
-          thumbnail: json.thumbnail
-        };
+      const results = data.trim().split("\n").filter(Boolean).map(line => {
+        const j = JSON.parse(line);
+        return { title: j.title, url: j.url, id: j.id, thumbnail: j.thumbnail };
       });
-
-      res.json({
-        success: true,
-        results
-      });
-
+      res.json({ success: true, results });
     } catch (e) {
-      res.status(500).json({
-        success: false,
-        error: e.message
-      });
+      res.status(500).json({ success: false, error: e.message });
     }
   });
 });
 
 /* =========================
-   VIDEO DETAILS + DOWNLOAD
+   FORMATS — dynamic quality list for a video
 ========================= */
-app.get("/api/video", (req, res) => {
-  const url = req.query.url;
+app.get("/api/formats", (req, res) => {
+  const { id } = req.query;
+  if (!id) return res.status(400).json({ success: false, error: "Missing id" });
 
-  if (!url) {
-    return res.status(400).json({
-      success: false,
-      error: "Missing URL"
-    });
-  }
+  const videoUrl = `https://www.youtube.com/watch?v=${id}`;
 
   const yt = spawn("yt-dlp", [
-    "--cookies", COOKIES,
-    "-j",
-    "--no-playlist",
-    url
+    ...COMMON_FLAGS,
+    "-j", videoUrl,
   ]);
 
   let data = "";
-  let error = "";
-
-  yt.stdout.on("data", chunk => {
-    data += chunk.toString();
-  });
-
-  yt.stderr.on("data", chunk => {
-    error += chunk.toString();
-  });
+  let errData = "";
+  yt.stdout.on("data", (chunk) => { data += chunk.toString(); });
+  yt.stderr.on("data", (chunk) => { errData += chunk.toString(); });
 
   yt.on("close", () => {
-    if (!data) {
-      return res.status(500).json({
-        success: false,
-        error
-      });
-    }
+    if (!data) return res.status(500).json({ success: false, error: errData });
 
     try {
       const json = JSON.parse(data);
 
-      const formats = (json.formats || [])
-        .filter(f => f.url && f.ext === "mp4")
-        .map(f => ({
-          quality: f.format_note || "unknown",
-          url: f.url,
-          type: "mp4"
+      // Collect unique video heights available
+      const heights = new Set();
+      (json.formats || []).forEach(f => {
+        if (f.vcodec && f.vcodec !== "none" && f.height) {
+          heights.add(f.height);
+        }
+      });
+
+      // Build format list: MP3 always first, then video qualities descending
+      const videoFormats = [...heights]
+        .sort((a, b) => b - a)
+        .map(h => ({
+          value: String(h),
+          label: h >= 2160 ? "4K" : h >= 1440 ? "2K" : `${h}p`,
+          type: "video",
+          hd: h >= 720,
         }));
 
-      const audio = (json.formats || [])
-        .find(f => f.acodec !== "none");
+      const formats = [
+        { value: "mp3", label: "MP3", type: "audio", hd: false },
+        ...videoFormats,
+      ];
 
-      if (audio) {
-        formats.push({
-          quality: "mp3",
-          url: audio.url,
-          type: "mp3"
-        });
-      }
-
-      res.json({
-        success: true,
-        title: json.title,
-        thumbnail: json.thumbnail,
-        duration: json.duration,
-        formats
-      });
-
+      res.json({ success: true, formats });
     } catch (e) {
-      res.status(500).json({
-        success: false,
-        error: e.message
-      });
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+});
+
+/* =========================
+   VIDEO DETAILS
+========================= */
+app.get("/api/video", (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).json({ success: false, error: "Missing URL" });
+
+  const yt = spawn("yt-dlp", [...COMMON_FLAGS, "-j", url]);
+
+  let data = "", errData = "";
+  yt.stdout.on("data", chunk => { data += chunk.toString(); });
+  yt.stderr.on("data", chunk => { errData += chunk.toString(); });
+
+  yt.on("close", () => {
+    if (!data) return res.status(500).json({ success: false, error: errData });
+    try {
+      const json = JSON.parse(data);
+      const formats = (json.formats || [])
+        .filter(f => f.url && f.ext === "mp4")
+        .map(f => ({ quality: f.format_note || "unknown", url: f.url, type: "mp4" }));
+      const audio = (json.formats || []).find(f => f.acodec !== "none");
+      if (audio) formats.push({ quality: "mp3", url: audio.url, type: "mp3" });
+      res.json({ success: true, title: json.title, thumbnail: json.thumbnail, duration: json.duration, formats });
+    } catch (e) {
+      res.status(500).json({ success: false, error: e.message });
     }
   });
 });
@@ -154,73 +155,54 @@ app.get("/api/video", (req, res) => {
 /* =========================
    DOWNLOAD (STREAM via yt-dlp)
 ========================= */
-
 app.get("/api/download", (req, res) => {
   const { id, format, title } = req.query;
-
-  if (!id || !format) {
-    return res.status(400).json({ success: false, error: "Missing id or format" });
-  }
+  if (!id || !format) return res.status(400).json({ success: false, error: "Missing id or format" });
 
   const videoUrl  = `https://www.youtube.com/watch?v=${id}`;
   const safeTitle = (title || id).replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_").slice(0, 80);
 
-  let args, filename, contentType, tmpFile;
-
   if (format === "mp3") {
-    // mp3: audio-only, can pipe stdout directly
-    filename    = `${safeTitle}_Audio.mp3`;
-    contentType = "audio/mpeg";
-    args = ["--cookies", COOKIES, "--no-playlist", "-x", "--audio-format", "mp3", "--audio-quality", "0", "-o", "-", videoUrl];
-
+    const filename = `${safeTitle}_Audio.mp3`;
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Type", "audio/mpeg");
 
-    const yt = spawn("yt-dlp", args);
+    const yt = spawn("yt-dlp", [
+      ...COMMON_FLAGS,
+      "-x", "--audio-format", "mp3", "--audio-quality", "0",
+      "-o", "-", videoUrl,
+    ]);
     yt.stdout.pipe(res);
     yt.stderr.on("data", (chunk) => console.error("yt-dlp:", chunk.toString()));
-    yt.on("error", (err) => {
-      console.error("spawn error:", err);
-      if (!res.headersSent) res.status(500).json({ success: false, error: "Download failed" });
-    });
+    yt.on("error", (err) => { if (!res.headersSent) res.status(500).json({ success: false, error: "Download failed" }); });
     req.on("close", () => yt.kill());
 
   } else {
-    // video: must write to temp file first because mp4 muxing requires seekable output
-    const height  = parseInt(format, 10);
-    const label   = height === 1080 ? "1080p_HD" : height === 720 ? "720p_HD" : `${height}p`;
-    filename    = `${safeTitle}_${label}.mp4`;
-    contentType = "video/mp4";
-    tmpFile     = path.join(os.tmpdir(), `gotube_${id}_${format}_${Date.now()}.mp4`);
+    const height   = parseInt(format, 10);
+    const label    = height >= 2160 ? "4K" : height >= 1440 ? "2K" : height >= 1080 ? "1080p_HD" : height >= 720 ? "720p_HD" : `${height}p`;
+    const filename = `${safeTitle}_${label}.mp4`;
+    const tmpFile  = path.join(os.tmpdir(), `gotube_${id}_${format}_${Date.now()}.mp4`);
 
-    args = [
-      "--cookies", COOKIES,
+    const yt = spawn("yt-dlp", [
+      ...COMMON_FLAGS,
       "-f", `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${height}]+bestaudio/best[height<=${height}]/best`,
       "--merge-output-format", "mp4",
-      "--no-playlist",
       "-o", tmpFile,
-      videoUrl
-    ];
+      videoUrl,
+    ]);
 
-    const yt = spawn("yt-dlp", args);
     yt.stderr.on("data", (chunk) => console.error("yt-dlp:", chunk.toString()));
-
-    yt.on("error", (err) => {
-      console.error("spawn error:", err);
-      if (!res.headersSent) res.status(500).json({ success: false, error: "Download failed" });
-    });
+    yt.on("error", (err) => { if (!res.headersSent) res.status(500).json({ success: false, error: "Download failed" }); });
 
     yt.on("close", (code) => {
       if (code !== 0 || !fs.existsSync(tmpFile)) {
         if (!res.headersSent) res.status(500).json({ success: false, error: "yt-dlp failed" });
         return;
       }
-
       const stat = fs.statSync(tmpFile);
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Type", "video/mp4");
       res.setHeader("Content-Length", stat.size);
-
       const stream = fs.createReadStream(tmpFile);
       stream.pipe(res);
       stream.on("close", () => fs.unlink(tmpFile, () => {}));
@@ -230,9 +212,6 @@ app.get("/api/download", (req, res) => {
   }
 });
 
-/* =========================
-   SERVER START
-========================= */
 app.listen(process.env.PORT || 3000, () => {
   console.log("GoTube FULL API running on Render");
 });
