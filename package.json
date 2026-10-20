@@ -1,11 +1,18 @@
 {
+<<<<<<< HEAD
   "name": "ytdlp-worker",
   "version": "1.0.0",
   "description": "",
+=======
+  "name": "metube-render-backend",
+  "version": "1.0.0",
+  "description": "GoTube Metadata Scraper Service running on Render",
+>>>>>>> 7b2732cf2f06b5549060dafcf646dec1016dc49c
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
+<<<<<<< HEAD
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -16,3 +23,11 @@
     "express": "^5.2.1"
   }
 }
+=======
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "youtube-sr": "^4.3.11"
+  }
+}
+>>>>>>> 7b2732cf2f06b5549060dafcf646dec1016dc49c
